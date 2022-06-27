@@ -8,8 +8,8 @@ We have started developing a model Domain Specific Language (DSL) that can be
 used to solve many of the same problems as [model
 generators](pysa_precollectors.md), while still keeping model information in
 `.pysa` files. The DSL aims to provide a compact way to generate models for all
-code that matches a given query. This allows users to avoid writing hundereds or
-thousand of models.
+code that matches a given query. This allows users to avoid writing hundreds or
+thousands of models.
 
 ## Basics
 
@@ -18,6 +18,8 @@ do so, add a `ModelQuery` to your `.pysa` file:
 
 ```python
 ModelQuery(
+  # Indicates the name of the query
+  name = "get_foo_sources",
   # Indicates that this query is looking for functions
   find = "functions",
   # Indicates those functions should be called 'foo'
@@ -31,6 +33,7 @@ ModelQuery(
 
 Things to note in this example:
 
+1. The `name` clause is the name of your query.
 1. The `find` clause lets you pick whether you want to model functions, methods or attributes.
 1. The `where` clause is how you refine your criteria for when a model should be generated - in this example, we're filtering for functions where the name matches `"foo"`.
 1. The `model` clause is a list of models to generate. Here, the syntax means that the functions matching the where clause should be modelled as returning `TaintSource[Test]`.
@@ -44,6 +47,9 @@ $ pyre analyze --dump-model-query-results /path/to/output/file.txt
 ```
 
 You can then view this file to see the generated models.
+
+## Name clauses
+The `name` clause describes what the query is meant to find.  Normally it follows the format of `get_` + [what the query matches with in the `where` clause] + [`_sinks`, `_source` and/or `_tito`]. This clause should be unique for every ModelQuery within a file.
 
 ## Find clauses
 
@@ -60,7 +66,7 @@ class C:
 
 ## Where clauses
 
-Where clauses are a list of predicates, all of which must match for an entity to be modelled. Note that certain predicates are only compatible with specific find clause kinds.
+`where` clauses are a list of predicates, all of which must match for an entity to be modelled. Note that certain predicates are only compatible with specific find clause kinds.
 
 ### `name.matches`
 
@@ -70,6 +76,7 @@ Example:
 
 ```python
 ModelQuery(
+  name = "get_foo",
   find = ...,
   where = [
     name.matches("foo.*")
@@ -86,6 +93,7 @@ Example:
 
 ```python
 ModelQuery(
+  name = "get_bar_C_foo",
   find = ...,
   where = [
     name.equals("bar.C.foo")
@@ -104,6 +112,7 @@ The clause will match when the fully-qualified name of the callable's return typ
 
 ```python
 ModelQuery(
+  name = "get_return_HttpRequest_sources",
   find = "functions",
   where = [
     return_annotation.equals("django.http.HttpRequest"),
@@ -118,6 +127,7 @@ This is similar to the previous clause, but will match when the fully-qualified 
 
 ```python
 ModelQuery(
+  name = "get_return_Request_sources",
   find = "methods",
   where = [
     return_annotation.matches(".*Request"),
@@ -140,6 +150,7 @@ Example:
 
 ```python
 ModelQuery(
+  name = "get_return_annotated_sources",
   find = functions,
   where = [
     return_annotation.is_annotated_type(),
@@ -161,6 +172,7 @@ This clause will match all callables which have at least one parameter where the
 Example:
 ```python
 ModelQuery(
+  name = "get_parameter_HttpRequest_sources",
   find = "functions",
   where = [
     any_parameter.annotation.equals("django.http.HttpRequest")
@@ -183,6 +195,7 @@ This clause will match all callables which have at least one parameter where the
 Example:
 ```python
 ModelQuery(
+  name = "get_parameter_Request_sources",
   find = "methods",
   where = [
     any_parameter.annotation.matches(".*Request")
@@ -204,6 +217,7 @@ This clause will match all callables which have at least one parameter with type
 Example:
 ```python
 ModelQuery(
+  name = "get_parameter_annotated_sources",
   find = "functions",
   where = [
     any_parameter.annotation.is_annotated_type()
@@ -226,6 +240,7 @@ Example:
 
 ```python
 ModelQuery(
+  name = "get_AnyOf_example",
   find = "methods",
   where = [
     AnyOf(
@@ -245,6 +260,7 @@ Example:
 
 ```python
 ModelQuery(
+  name = "get_AllOf_example",
   find = "methods",
   where = [
     AnyOf(
@@ -272,6 +288,7 @@ For example, if you wanted to find all functions which are decorated by `@app.ro
 
 ```python
 ModelQuery(
+  name = "get_app_route_decorator",
   find = "functions",
   where = Decorator(name.matches("app.route")),
   ...
@@ -280,6 +297,7 @@ ModelQuery(
 or
 ```python
 ModelQuery(
+  name = "get_my_module_app_route_decorator",
   find = "functions",
   where = Decorator(name.equals("my_module.app.route")),
   ...
@@ -307,6 +325,7 @@ def nomatch():
 This query will match both `match1()` and `match2()`, but not `nomatch()`, since the values of the positional arguments don't match up.
 ```python
 ModelQuery(
+  name = "get_d1_decorator",
   find = "functions",
   where = Decorator(
     name.matches("d1"),
@@ -330,6 +349,7 @@ def match2():
 This query will match both `match1()` and `match2()`:
 ```python
 ModelQuery(
+  name = "get_d1_decorator",
   find = "functions",
   where = Decorator(
     name.matches("d1"),
@@ -361,6 +381,7 @@ def nomatch2():
 This query will match both `match1()` and `match2()`, but not `nomatch1()` or `nomatch2()`:
 ```python
 ModelQuery(
+  name = "get_d1_decorator",
   find = "functions",
   where = Decorator(
     name.matches("d1"),
@@ -380,6 +401,7 @@ Example:
 
 ```python
 ModelQuery(
+  name = "get_childOf_foo_Bar",
   find = "methods",
   where = parent.equals("foo.Bar"),
   ...
@@ -394,6 +416,7 @@ Example:
 
 ```python
 ModelQuery(
+  name = "get_childOf_Foo",
   find = "methods",
   where = parent.matches(".*Foo.*"),
   ...
@@ -408,6 +431,7 @@ Example:
 
 ```python
 ModelQuery(
+  name = "get_subclassOf_C",
   find = "attributes",
   where = parent.extends("C"),
   ...
@@ -434,6 +458,7 @@ Example:
 
 ```python
 ModelQuery(
+  name = "get_transitive_subclassOf_C",
   find = "attributes",
   where = parent.extends("C", is_transitive=True),
   ...
@@ -441,6 +466,53 @@ ModelQuery(
 ```
 
 This query will model `C.x`, `D.y` and `E.z`.
+
+### `parent.decorator` clause
+
+The `parent.decorator` clause is used to specify constraints on a class decorator, so you can choose to model entities on classes only if the class it is part of has the specified decorator.
+
+The arguments for this clause are identical to the non-class constraint `Decorator`, for more information, please see the [`Decorator` clauses](#decorator-clauses) section.
+
+Example:
+
+```python
+ModelQuery(
+  name = "get_childOf_d1_decorator_sources",
+  find = "methods",
+  where = [
+    parent.decorator(
+      name.matches("d1"),
+      arguments.contains(2)
+    ),
+    name.matches("\.__init__$)
+  ],
+  model = [
+    Parameters(TaintSource[Test], where=[
+        Not(name.equals("self")),
+        Not(name.equals("a"))
+    ])
+  ]
+)
+```
+
+For example, the above query when run on the following code:
+```python
+@d1(2)
+class Foo:
+  def __init__(self, a, b):
+     ...
+
+@d1()
+class Bar:
+  def __init(self, a, b):
+    ...
+
+@d2(2)
+class Baz:
+  def __init(self, a, b):
+    ...
+```
+will result in a model for `def Foo.__init__(b: TaintSource[Test])`.
 
 ### `Not` clauses
 
@@ -450,6 +522,7 @@ Example:
 
 ```python
 ModelQuery(
+  name = "get_Not_example",
   find = "methods",
   where = [
     Not(
@@ -473,6 +546,7 @@ Returned taint takes the form of `Returns(TaintSpecification)`, where `TaintSpec
 
 ```python
 ModelQuery(
+  name = "get_Returns_sources",
   find = "methods",
   where = ...,
   model = [
@@ -487,6 +561,7 @@ Parameters can be tainted using the `Parameters()` clause. By default, all param
 
 ```python
 ModelQuery(
+  name = "get_Parameters_sources",
   find = "methods",
   where = ...,
   model = [
@@ -509,6 +584,7 @@ Example:
 
 ```python
 ModelQuery(
+  name = "get_request_data_sources",
   find = "methods",
   where = ...,
   model = [
@@ -531,6 +607,7 @@ Example:
 
 ```python
 ModelQuery(
+  name = "get_index_sources",
   find = "methods",
   where = ...,
   model = [
@@ -552,6 +629,7 @@ Example:
 
 ```python
 ModelQuery(
+  name = "get_annotated_parameters_sources",
   find = "methods",
   where = ...,
   model = [
@@ -588,6 +666,7 @@ Note that the type name that should be matched against is its fully qualified na
 Here are some examples of `where` clauses that can be used to specify models for the annotated attributes in this case:
 ```python
 ModelQuery(
+  name = "get_annotated_attributes_sources",
   find = "attributes",
   where = [
     AnyOf(
@@ -610,7 +689,7 @@ test.Foo.y: TaintSource[Test]
 test.Foo.z: TaintSource[Test]
 ```
 
-#### `Not` and `AnyOf` clauses
+#### `Not`, `AllOf` and `AnyOf` clauses
 
 The `Not`, `AllOf` and `AnyOf` clauses can be used in the same way as they are in the main `where` clause of the model query. `Not` can be used to negate any existing clause, `AllOf` to match when all of several supplied clauses match, and `AnyOf` can be used to match when any one of several supplied clauses match.
 
@@ -618,6 +697,7 @@ Example:
 
 ```python
 ModelQuery(
+  name = "get_Not_AnyOf_AllOf_example_sources",
   find = "methods",
   where = ...,
   model = [
@@ -656,6 +736,7 @@ def f2(good_3, bad_2, good_4):
 Suppose we wanted to model all parameters with the prefix `bad_` here and attach a `ViaTypeOf` to them. In this case it is still possible to attach these features to the parameter model, by using a standalone `ViaTypeOf` as follows:
 ```python
 ModelQuery(
+  name = "get_f_sinks",
   find = "functions",
   where = name.matches("f"),
   model = [
@@ -684,6 +765,7 @@ Example:
 
 ```python
 ModelQuery(
+  name = "get_attribute_sources_sinks",
   find = "attributes",
   where = ...,
   model = [
