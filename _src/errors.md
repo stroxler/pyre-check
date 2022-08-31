@@ -653,6 +653,16 @@ This is usually caused by failing to import the proper module.
 Pyre will raise error 21 instead ("Undefined import") when the import statement is present, but the module to be imported could not be found in the search path.
 If the module provides stub files, please provide their location via the `--search-path` commandline parameter.
 
+#### Namespace Package Modules
+
+One case where you may run into undefined imports on code that works at runtime is when importing namespace modules.
+The CPython runtime allows you to import a directory that is on your `PYTHONPATH`, even if it contains no `__init__.py`; this behavior is defined in [PEP 420](https://peps.python.org/pep-0420/) and the module is called a namespace package.
+In order to make Pyre both fast and consistent on incremental updates, in Pyre we only allow importing namespace packages that have at least one python file as a direct child.
+
+So, for example, if I have a directory tree with just `a/b/c.py` then Pyre will allow `import a.b.c` and `import a.b` but not `import a`.
+A namespace package module can never contain useful types or code so it is rare to directly import it, but in special cases it might be useful (for example to access the `__name__` attribute).
+In these cases, you'll need to suppress Pyre errors.
+
 ### 19: Too Many Argument
 
 Pyre verifies that you pass a legal number of arguments to functions.
@@ -1113,18 +1123,18 @@ def my_decorator_factory(message: str) -> MyCallableProtocol:
 If you are using a `ParamSpec` in your decorator, use the following:
 
 ```python
-from typing import Awaitable, Callable, Protocol, TypeVar
+from typing import Any, Callable, Coroutine, Protocol, TypeVar
 from pyre_extensions import ParameterSpecification
+import asyncio
 
 R = TypeVar("R")
 P = ParameterSpecification("P")
 
 class MyCallableProtocol(Protocol):
-    def __call__(self, f: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]: ...
+    def __call__(self, f: Callable[P, Coroutine[object, object, R]]) -> Callable[P, Coroutine[object, object, R]]: ...
 
 def my_decorator_factory(message: str) -> MyCallableProtocol:
-
-    def _decorator(f: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
+    def _decorator(f: Callable[P, Coroutine[object, object, R]]) -> Callable[P, Coroutine[object, object, R]]:
 
         async def _inner(*args: P.args, **kwargs: P.kwargs) -> R:
             print(message)
@@ -1133,6 +1143,12 @@ def my_decorator_factory(message: str) -> MyCallableProtocol:
         return _inner
 
     return _decorator
+
+@my_decorator_factory("hello!")
+async def foo() -> int:
+    return 1
+
+asyncio.run(foo())
 ```
 
 Note: Support for such callables is currently **experimental** and varies from one typechecker to another. This behavior may change in the future.

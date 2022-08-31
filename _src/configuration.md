@@ -3,16 +3,7 @@ id: configuration
 title: Configuration
 sidebar_label: Configuration
 ---
-import {OssOnly, FbInternalOnly} from 'internaldocs-fb-helpers';
-import FbConfiguration from './fb/configuration.md';
-
-<FbInternalOnly>
-
-<FbConfiguration />
-
-</FbInternalOnly>
-
-<OssOnly>
+<!-- There is a separate page for internal config at ./fb/configuration.md -->
 
 Pyre can be run without a configuration (see [Command Line Arguments](configuration.md#command-line-arguments)) but we do recommend that you create a configuration (see [Getting Started](getting_started.md)) and commit that to your version control system to make sure everyone working on your project is using the same settings.
 
@@ -89,29 +80,6 @@ Empty string indicates extensionless files.
 
 - `strict`: Setting this to `true` will make [strict mode](gradual_typing.md#strict-mode) the default in your project.
 
-
-### Local Configurations
-If you have sub-projects within your project root that you would like to run Pyre on, you
-can create a `.pyre_configuration.local` at the root of your subproject and override any
-of the fields set in `.pyre_configuration` above. If you are using local configurations, your
-`.pyre_configuration` should not specify any sources itself.
-
-When calling Pyre, the nearest local configuration at- or above the current directory will be used.
-You can use the `--local-configuration` (or `-l`) flag to invoke Pyre on a project that includes a
-local configuration, while outside its source directory. It works like `make -C`:
-```bash
-$ ls project
-  .pyre_configuration.local   project_file.py   ...
-$ pyre -l project
-  Checking...
-```
-
-#### Nested Local Configurations
-Nesting local configurations is not supported. The configuration should live at the root of your
-project unit and inclusion/exclusion of files from type checking can be done by specifying sources, using
-`ignore_all_errors`, or by adding [local suppression](errors.md#suppressing-individual-errors).
-
-
 ## Command Line Arguments
 You can get a full and current list of options to run Pyre by running `pyre --help`. The following is a list of commonly used commands and options.
 
@@ -162,4 +130,13 @@ which provides typed stubs for library functions. This can also be set in `.pyre
 
 - `--version`: Print the current version of Pyre.
 
-</OssOnly>
+## Working with Multi-Project Repositories
+
+If you have a single repository with multiple independent Python projects, we recommend you
+use a separate `.pyre_configuration` for each one. This allows each project to be
+type checked independently.
+
+If you use virtual environments to manage separate dependencies for each project, you can install
+`pyre` as a development dependency in each one; by default Pyre will detect system packages
+from the environment it is installed in, so this will cause each project to detect the
+correct dependencies (assuming you activate the virtual environment before running Pyre).
