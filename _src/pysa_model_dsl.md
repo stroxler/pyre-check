@@ -63,7 +63,7 @@ The `name` clause describes what the query is meant to find.  Normally it follow
 
 ## Find clauses
 
-The `find` clause specifies what entities to model, and currently supports `"functions"`, `"methods"` and `"attributes"`. `"functions"` indicates that you're querying for free functions, `"methods"` indicates that you're only querying class methods, and `"attributes"` indicates that you're querying for attributes on classes.
+The `find` clause specifies what entities to model, and currently supports `"functions"`, `"methods"`, `"attributes"`, and `"globals"`. `"functions"` indicates that you're querying for free functions, `"methods"` indicates that you're only querying class methods, `"attributes"` indicates that you're querying for attributes on classes, and `"globals"` indicates that you're querying for names available in the global scope.
 
 Note that `"attributes"` also includes constructor-initialized attributes, such as `C.y` in the following case:
 ```python
@@ -72,6 +72,15 @@ class C:
 
   def __init__(self):
     self.y = ...
+```
+
+Note that `"globals"` currently don't infer the type annotation of their value, so querying is more effective when they're properly annotated.
+```python
+def fun(x: int, y: str) -> int:
+    return x + int(y)
+
+a = fun(1, "2") # -> typing.Any
+b: int = fun(1, "2") # -> int
 ```
 
 ## Where clauses
@@ -166,6 +175,73 @@ ModelQuery(
     return_annotation.is_annotated_type(),
   ],
   model = Returns(TaintSource[SQL])
+)
+```
+
+This query would match on functions like the one shown above.
+
+### `type_annotation` clauses
+
+Model queries allow for querying based on the type annotation of a `global`. Note that this is similar to the [`return_annotation`](#return_annotation-clauses) clauses shown previously. See also: `Parameters` model [`type_annotation`](#type_annotation-clause) clauses.
+
+#### `type_annotation.equals`
+
+The clause will match when the fully-qualified name of the global's explicitly annotated type matches the specified value exactly.
+
+```python
+ModelQuery(
+  name = "get_string_dicts",
+  find = "globals",
+  where = [
+    type_annotation.equals("typing.Dict[(str, str)]"),
+  ],
+  model = GlobalModel(TaintSource[SelectDict])
+)
+```
+
+For example, the above query when run on the following code:
+
+```python
+unannotated_dict = {"hello": "world", "abc": "123"}
+annotated_dict: Dict[str, str] = {"hello": "world", "abc": "123"}
+```
+
+will result in a model for `annotated_dict: TaintSource[SelectDict]`.
+
+#### `type_annotation.matches`
+
+This is similar to the previous clause, but will match when the fully-qualified name of the global's explicit type annotation matches the specified pattern.
+
+```python
+ModelQuery(
+  name = "get_anys",
+  find = "globals",
+  where = [
+    return_annotation.matches(".*typing.Any.*"),
+  ],
+  model = GlobalModel(TaintSource[SelectAny])
+)
+```
+
+#### `type_annotation.is_annotated_type`
+
+This will match when a global's type is annotated with [`typing.Annotated`](https://docs.python.org/3/library/typing.html#typing.Annotated). This is a type used to decorate existing types with context-specific metadata, e.g.
+```python
+from typing import Annotated
+
+result: Annotated[str, "SQL"] = ...
+```
+
+Example:
+
+```python
+ModelQuery(
+  name = "get_return_annotated_sources",
+  find = globals,
+  where = [
+    return_annotation.is_annotated_type(),
+  ],
+  model = GlobalModel(TaintSource[SQL])
 )
 ```
 
@@ -275,12 +351,12 @@ ModelQuery(
   where = [
     AnyOf(
       AllOf(
-        parent.extends("a.b"),
-        parent.matches("Foo"),
+        cls.extends("a.b"),
+        cls.matches("Foo"),
       ),
       AllOf(
-        parent.extends("c.d"),
-        parent.matches("Bar")
+        cls.extends("c.d"),
+        cls.matches("Bar")
       )
     )
   ],
@@ -401,11 +477,11 @@ ModelQuery(
 )
 ```
 
-### `parent.equals` clause
+### `cls.equals` clause
 
-You may use the `parent` clause to specify predicates on the parent class. This predicate can only be used when the find clause specifies methods or attributes.
+You may use the `cls` clause to specify predicates on the class. This predicate can only be used when the find clause specifies methods or attributes.
 
-The `parent.equals` clause is used to model entities when the parent's fully qualified name is an exact match for the specified string.
+The `cls.equals` clause is used to model entities when the class's fully qualified name is an exact match for the specified string.
 
 Example:
 
@@ -413,14 +489,14 @@ Example:
 ModelQuery(
   name = "get_childOf_foo_Bar",
   find = "methods",
-  where = parent.equals("foo.Bar"),
+  where = cls.equals("foo.Bar"),
   ...
 )
 ```
 
-### `parent.matches` clause
+### `cls.matches` clause
 
-The `parent.matches` clause is used to model entities when the parent's fully qualified name matches the provided regex.
+The `cls.matches` clause is used to model entities when the class's fully qualified name matches the provided regex.
 
 Example:
 
@@ -428,14 +504,14 @@ Example:
 ModelQuery(
   name = "get_childOf_Foo",
   find = "methods",
-  where = parent.matches(".*Foo.*"),
+  where = cls.matches(".*Foo.*"),
   ...
 )
 ```
 
-### `parent.extends` clause
+### `cls.extends` clause
 
-The `parent.extends` clause is used to model entities when the parent's class is a subclass of the provided class name.
+The `cls.extends` clause is used to model entities when the class is a subclass of the provided class name.
 
 Example:
 
@@ -443,12 +519,12 @@ Example:
 ModelQuery(
   name = "get_subclassOf_C",
   find = "attributes",
-  where = parent.extends("C"),
+  where = cls.extends("C"),
   ...
 )
 ```
 
-The default behavior is that it will only match if the parent class is an instance of, or a direct subclass of the specified class. For example, with classes:
+The default behavior is that it will only match if the class is an instance of, or a direct subclass of the specified class. For example, with classes:
 ```python
 class C:
   x = ...
@@ -470,16 +546,31 @@ Example:
 ModelQuery(
   name = "get_transitive_subclassOf_C",
   find = "attributes",
-  where = parent.extends("C", is_transitive=True),
+  where = cls.extends("C", is_transitive=True),
   ...
 )
 ```
 
 This query will model `C.x`, `D.y` and `E.z`.
 
-### `parent.decorator` clause
+If you do not want to match on the class itself, you can use the `includes_self` flag.
 
-The `parent.decorator` clause is used to specify constraints on a class decorator, so you can choose to model entities on classes only if the class it is part of has the specified decorator.
+Example:
+
+```python
+ModelQuery(
+  name = "get_transitive_subclassOf_C",
+  find = "attributes",
+  where = cls.extends("C", is_transitive=True, includes_self=False),
+  ...
+)
+```
+
+This query will model `D.y` and `E.z`.
+
+### `cls.decorator` clause
+
+The `cls.decorator` clause is used to specify constraints on a class decorator, so you can choose to model entities on classes only if the class it is part of has the specified decorator.
 
 The arguments for this clause are identical to the non-class constraint `Decorator`, for more information, please see the [`Decorator` clauses](#decorator-clauses) section.
 
@@ -490,11 +581,11 @@ ModelQuery(
   name = "get_childOf_d1_decorator_sources",
   find = "methods",
   where = [
-    parent.decorator(
+    cls.decorator(
       name.matches("d1"),
       arguments.contains(2)
     ),
-    name.matches("\.__init__$)
+    name.matches("\.__init__$")
   ],
   model = [
     Parameters(TaintSource[Test], where=[
@@ -524,11 +615,11 @@ class Baz:
 ```
 will result in a model for `def Foo.__init__(b: TaintSource[Test])`.
 
-### `parent.any_child` clause
+### `cls.any_child` clause
 
-The `parent.any_child` clause is used to model entities when any child of the current class meets the specified constraints.
+The `cls.any_child` clause is used to model entities when any child of the current class meets the specified constraints.
 
-The arguments for this clause are any combination of valid class constraints (`parent.equals`, `parent.matches`, `parent.extends`, `parent.decorator`) and logical clauses (`AnyOf`, `AllOf`, `Not`), along with an optional `is_transitive` clause.
+The arguments for this clause are any combination of valid class constraints (`cls.equals`, `cls.matches`, `cls.extends`, `cls.decorator`) and logical clauses (`AnyOf`, `AllOf`, `Not`), along with the optional `is_transitive` and `includes_self` clauses.
 
 Example:
 
@@ -537,13 +628,13 @@ ModelQuery(
   name = "get_parent_of_d1_decorator_sources",
   find = "methods",
   where = [
-    parent.any_child(
-      parent.decorator(
+    cls.any_child(
+      cls.decorator(
         name.matches("d1"),
         arguments.contains(2)
       )
     ),
-    name.matches("\.__init__$)
+    name.matches("\.__init__$")
   ],
   model = [
     Parameters(TaintSource[Test], where=[
@@ -554,7 +645,7 @@ ModelQuery(
 )
 ```
 
-Similar to the `parent.extends` constraint, the default behavior is that it will only match if the current class is equal to or is a direct subclass of the specified class. For example, with classes:
+Similar to the `cls.extends` constraint, the default behavior is that it will only match if the current class is equal to or is a direct subclass of the specified class. For example, with classes:
 ```python
 class Foo:
   def __init__(self, a, b):
@@ -581,14 +672,14 @@ ModelQuery(
   name = "get_transitive_parent_of_d1_decorator_sources",
   find = "attributes",
   where = [
-    parent.any_child(
-      parent.decorator(
+    cls.any_child(
+      cls.decorator(
         name.matches("d1"),
         arguments.contains(2)
       ),
       is_transitive=True
     ),
-    name.matches("\.__init__$)
+    name.matches("\.__init__$")
   ],
   ...
 )
@@ -596,6 +687,30 @@ ModelQuery(
 
 This query will model `Foo.__init__`, `Bar.__init__` and `Baz.__init__`.
 
+If you would like to model all subclasses of a class excluding itself, you can use the `includes_self` flag.
+
+Example:
+
+```python
+ModelQuery(
+  name = "get_transitive_parent_of_d1_decorator_sources",
+  find = "attributes",
+  where = [
+    cls.any_child(
+      cls.decorator(
+        name.matches("d1"),
+        arguments.contains(2)
+      ),
+      is_transitive=True,
+      includes_self=False
+    ),
+    name.matches("\.__init__$")
+  ],
+  ...
+)
+```
+
+This query will model `Foo.__init__`, `Bar.__init__` but NOT `Baz.__init__`.
 
 ### `Not` clauses
 
@@ -610,7 +725,7 @@ ModelQuery(
   where = [
     Not(
       name.matches("foo.*"),
-      parent.matches("testing.unittest.UnitTest"),
+      cls.matches("testing.unittest.UnitTest"),
     )
   ],
   model = ...
@@ -790,12 +905,12 @@ ModelQuery(
         Not(
           AnyOf(
             AllOf(
-              parent.extends("a.b"),
-              parent.matches("Foo"),
+              cls.extends("a.b"),
+              cls.matches("Foo"),
             ),
             AllOf(
-              parent.extends("c.d"),
-              parent.matches("Bar")
+              cls.extends("c.d"),
+              cls.matches("Bar")
             )
           )
         )
@@ -853,6 +968,23 @@ ModelQuery(
   where = ...,
   model = [
     AttributeModel(TaintSource[Test], TaintSink[Test])
+  ]
+)
+```
+
+### Models for globals
+
+Taint for global models requires a `GlobalModel` model clause, which can only be used when the find clause specifies globals.
+
+Example:
+
+```python
+ModelQuery(
+  name = "get_global_sources",
+  find = "globals",
+  where = ...,
+  model = [
+    GlobalModel(TaintSource[Test])
   ]
 )
 ```

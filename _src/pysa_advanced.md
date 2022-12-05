@@ -33,6 +33,126 @@ To prevent a function or method to be marked as obscure, one can use the
 def module.foo(): ...
 ```
 
+## Parameter and return path
+
+When writing a model for a source, the `ReturnPath` annotation allows to specify
+which index or attribute of the returned value is tainted. For instance:
+
+```python
+def only_attribute_foo_tainted() -> TaintSource[Test, ReturnPath[_.foo]]: ...
+```
+
+Similarly, the `ParameterPath` annotation allows to specify which index or attribute
+of an argument leads to a sink. For instance:
+
+```python
+def only_arg_dot_bar_is_sink(arg: TaintSink[Test, ParameterPath[_.bar]]): ...
+```
+
+### Access path definition
+
+The `ParameterPath` and `ReturnPath` annotation takes an **access path** as an argument.
+An access path starts with an underscore `_` which represents the whole argument or
+return value (depending on the context). The underscore can be followed by attribute
+accesses (e.g, `_.foo.bar`) and index accesses (e.g, `_["foo"][0]["bar"]`), or a
+combination of both (e.g, `_.foo[0]`).
+
+In addition to these, two special calls can be used: `.all()` and `.keys()`.
+
+`.all()` is used to represent that any index might be tainted. This is usually when
+the index cannot be known statically. For instance:
+
+```python
+def foo(i: int):
+  i = random.randint(0, 100)
+  return {i: source()}
+```
+
+This can be represented by the model:
+```python
+def foo(): TaintSource[Test, ReturnPath[_.all()]]: ...
+```
+
+`.keys()` is used to represent that any key of the dictionary might be tainted.
+For instance:
+
+```python
+def foo():
+  return {source(): 0}
+```
+
+This can be represented by the model:
+```python
+def foo(): TaintSource[Test, ReturnPath[_.keys()]]: ...
+```
+
+### Taint In Taint Out
+
+`ParameterPath` and `ReturnPath` can also be used to give more information about
+a propagation. For instance:
+
+```python
+def foo(arg):
+  return {"a": arg["b"][42]}
+```
+
+This can be represented by the model:
+```python
+def foo(arg: TaintInTaintOut[ParameterPath[_["b"][42]], ReturnPath[_["a"]]]): ...
+```
+
+Note that Pysa will automatically infer propagations if it has access to the body
+of the function. Writing taint-in-taint-out models should rarely be required.
+
+When using the `Updates` annotation, the annotation `UpdatePath` is used instead
+of `ReturnPath`. For instance:
+
+```python
+def MyClass.updates_foo(self, x: TaintInTaintOut[Updates[self], UpdatePath[_.foo]]): ...
+```
+
+## Collapsing on taint-in-taint-out
+
+Collapsing (also called taint broadening) is an over-approximation performed by
+the taint analysis for correctness or performance reasons. After applying collapsing,
+Pysa considers that a whole object or variable is tainted when only some attributes
+or keys were initially tainted.
+
+The most common causes for taint collapsing are:
+* Taint goes through an [obscure model](#obscure-models), when it does not have
+the body of the callee; Pysa must assume anything could get tainted, for correctness.
+* The number of tainted attributes or keys hits a [threshold](#tune-the-taint-tree-width-and-depth).
+To prevent the analysis from blowing up by tracking too many values, Pysa assumes the whole object is tainted.
+
+Whenever collapsing happens, Pysa will add the [broadening feature](pysa_features.md#broadening-feature) on
+the taint flow, which can help discard false positives in post processing.
+
+When specifying a [taint propagation](pysa_basics.md#taint-propagation) in a `.pysa` file,
+the propagation will collapse the taint by default. For instance:
+
+```python
+def tito(arg: TaintInTaintOut): ...
+```
+
+```python
+def foo():
+  x = {"a": source()}
+  y = tito(x) # Only `x['a']` is tainted, but `y` gets tainted.
+  sink(y) # Issue since `y` is tainted
+  sink(y['b']) # Also an issue, because taint is propagated from `y` to `y['b']`.
+```
+
+If the function is known to preserve the structure of the argument, the `NoCollapse`
+annotation can be used to disable collapsing. For instance:
+
+```python
+def tito(arg: TaintInTaintOut[NoCollapse]): ...
+```
+
+This would remove both issues from the previous example.
+
+Note that this can be used in combination with [`ParameterPath` and `ReturnPath`](#parameter-and-return-path).
+
 ## Tainting Specific `kwargs`
 
 Sometimes, a function can have potential sinks mixed together with benign
@@ -272,6 +392,9 @@ overriden method on the base class.
 }
 ```
 
+This option can also be provided in the command line, using
+`--maximum-overrides-to-analyze`.
+
 This can speed up the analysis, but it will lead to false negatives, because
 Pysa will only propagate taint to or from 60 (in the case of the above example)
 overriden methods on subclasses. The remaining overriding methods will be
@@ -311,8 +434,8 @@ vulnerabilities. Use it with caution.
 
 ## Limit the tito depth for better signal and performance
 
-Pysa infers automatically when a function propagate the taint from one argument
-to its return value. This is called tito, for Taint In Taint Out. In practice,
+Pysa automatically infers when a function propagate the taint from one argument
+to its return value. This is called tito, for "Taint In Taint Out". In practice,
 infering it can be very expensive since the taint can go through an arbitrary
 number of hops (i.e, depth).
 
@@ -348,7 +471,7 @@ This option can also be added in the `taint.config` as follows:
 }
 ```
 
-# Inlining Decorators during Analysis
+## Inlining Decorators during Analysis
 
 By default, Pysa ignores issues that arise in the bodies of decorators. For example, it misses issues like decorators logging data. In the code below, Pysa will not catch the flow from `loggable_string` to the sink within the decorator `with_logging`:
 
@@ -527,3 +650,200 @@ RuleZ: SourceC -> SinkD
 If transform `MyTransform` is applied to taint `SourceC`, there is no possible rule it can possibly match. As an optimization, we check for this continuously in our analysis and filter out eagerly.
 
 Also note that the existing TaintInTaintOut annotation semantics of TITO being assumed (instead of inferred) on the argument are unchanged.
+
+## Tune the taint tree width and depth
+
+Pysa provides many options to fine tune the taint analysis. The following
+options can be provided either via the command line or in the `taint.config` file,
+under the `options` section.
+
+For instance:
+```json
+{
+  "sources": [],
+  "sinks": [],
+  "features": [],
+  "rules": [],
+  "options": {
+    "maximum_model_source_tree_width": 10,
+    "maximum_model_sink_tree_width": 10,
+    "maximum_model_tito_tree_width": 10
+  }
+}
+```
+
+When not provided, these are set to the following defaults:
+```ocaml file=source/interprocedural_analyses/taint/taintConfiguration.ml start=DOCUMENTATION_CONFIGURATION_START end=DOCUMENTATION_CONFIGURATION_END
+
+```
+
+### Maximum model source tree width
+
+* Command line option: `--maximum-model-source-tree-width`
+* taint.config option: `maximum_model_source_tree_width`
+
+This limits the width of the source tree in the model for a callable, i.e
+the number of output paths in the return value.
+
+For instance:
+```python
+def foo():
+  return {"a": source(), "b": source(), "c": source()}
+```
+
+The source tree for `foo` has a width of 3. Above the provided threshold, pysa
+will collapse the taint and consider the whole dictionary tainted.
+
+### Maximum model sink tree width
+
+* Command line option: `--maximum-model-sink-tree-width`
+* taint.config option: `maximum_model_sink_tree_width`
+
+This limits the width of the sink tree in the model for a callable, i.e
+the number of input paths leading to a sink for a given parameter.
+
+For instance:
+```python
+def foo(arg):
+  sink(arg[1])
+  sink(arg[2])
+  sink(arg[3])
+```
+
+The sink tree for `foo` and parameter `arg` has a width of 3.
+Above the provided threshold, pysa will collapse the taint and consider that the
+whole argument leads to a sink.
+
+### Maximum model tito tree width
+
+* Command line option: `--maximum-model-tito-tree-width`
+* taint.config option: `maximum_model_tito_tree_width`
+
+This limits the width of the taint-in-taint-out tree in the model for a callable,
+i.e the number of input paths propagated to the return value, for a given parameter.
+
+For instance:
+```python
+def foo(arg):
+  return '%s:%s:%s' % (arg.a, arg.b, arg.c)
+```
+
+The taint-in-taint-out tree for `foo` and parameter `arg` has a width of 3.
+Above the provided threshold, pysa will collapse the taint and consider that the
+taint on the whole argument is propagated to the return value.
+
+### Maximum tree depth after widening
+
+* Command line option: `--maximum-tree-depth-after-widening`
+* taint.config option: `maximum_tree_depth_after_widening`
+
+This limits the depth of the source, sink and tito trees within loops, i.e the
+length of source, sink and tito paths for each variables.
+
+For instance:
+```python
+def foo():
+  variable = MyClass()
+  for x in generate():
+    variable.a.b.c = source()
+  return result
+```
+
+The source tree for `variable` has a depth of 3 (i.e, `a` -> `b` -> `c`).
+Within a loop, pysa limits the depth to the provided threshold. For instance,
+if that threshold is 1, we would consider that `variable.a` is entirely tainted.
+
+### Maximum return access path width
+
+* Command line option: `--maximum-return-access-path-width`
+* taint.config option: `maximum_return_access_path_width`
+
+This limits the width of the return access path tree in the model for a callable,
+i.e the number of output paths propagated to the return value, for a given parameter.
+
+For instance:
+```python
+def foo(arg):
+  return {'a': arg, 'b': arg, 'c': arg}
+```
+
+The return access path tree for `foo` and parameter `arg` has a width of 3.
+Above the provided threshold, pysa will collapse the taint and consider that the
+whole return value is tainted whenever `arg` is tainted.
+
+### Maximum return access path depth after widening
+
+* Command line option: `--maximum-return-access-path-depth-after-widening`
+* taint.config option: `maximum_return_access_path_depth_after_widening`
+
+This limits the depth of the return access path tree within loops, i.e the
+length of output paths propagated to the return value, for a given parameter.
+
+For instance:
+```python
+def foo(arg):
+  result = MyClass()
+  for x in generate():
+    result.a.b.c = arg
+  return result
+```
+
+The return access path tree for `foo` and parameter `arg` has a depth  of 3
+(i.e, `a` -> `b` -> `c`). Within a loop, pysa limits the depth to the provided
+threshold. For instance, if that threshold is 2, we would cut the output path
+to just `a.b`.
+
+### Maximum tito collapse depth
+
+* Command line option: `--maximum-tito-collapse-depth`
+* taint.config option: `maximum_tito_collapse_depth`
+
+This limits the depth of the taint tree after applying taint-in-taint-out,
+i.e the length of paths for taint propagated from a parameter to the return
+value.
+
+For instance:
+```python
+def identity(arg): return arg
+
+def foo():
+  input = {'a': {'b': {'c': source()}}}
+  output = identity(input)
+```
+
+The taint tree for `input` has a depth of 3 (i.e, `a` -> `b` -> `c`).
+When the taint is propagated to the return value of `identity`, we limit
+the resulting taint tree to the given depth. For instance, if that threshold
+is 1, we would consider that `output['a']` is tainted.
+
+This is also applied for sinks in the backward analysis:
+```python
+def foo(arg):
+  output = identity(arg)
+  sink(output['a']['b']['c'])
+```
+With a threshold of 1, we would consider that `output['a']` leads to a sink.
+
+### Maximum tito positions
+
+* Command line option: `--maximum-tito-positions`
+* taint.config option: `maximum_tito_positions`
+
+This limits the number of positions to keep track of when propagating taint.
+
+When taint is propagated through a function and returned (i.e, taint-in-taint-out),
+pysa will keep track of the position of the argument, and display it in the trace.
+
+For instance:
+```python
+def foo():
+  x = source()
+  y = tito(x)
+           ^
+  z = {"a": y}
+            ^
+  sink(z)
+```
+
+In this example, we have 2 tito positions. Above the provided threshold,
+pysa simply discards all positions. Note that the taint is still propagated.

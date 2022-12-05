@@ -1,7 +1,7 @@
 ---
 id: errors
-title: Errors
-sidebar_label: Errors
+title: Type Errors
+sidebar_label: Type Errors
 ---
 
 import Internal from './fb/errors.md';
@@ -151,7 +151,7 @@ def process_data(data: Data) -> None:
 ```
 
 ### Third-Party Libraries
-Not all third-party libraries come with Python code that Pyre can analyze (e.g. `cython` modules), and some libraries contain source code without annotations. This will often show up in the form of undefined attribute errors:
+Not all third-party libraries come with Python code that Pyre can analyze (e.g. `Cython` modules), and some libraries contain source code without annotations. This will often show up in the form of undefined attribute errors:
 
 ```
 Undefined attribute [16]: Module <library> has no attribute <some attribute>.
@@ -1931,6 +1931,27 @@ def good(divisor: int) -> Optional[int]:
     except ZeroDivisionError:
         print(f"Cannot divide {dividend} by 0")  # OK
 ```
+
+### 62: Non-literal string
+
+Pyre will error if you passs in a non-literal string into a function call that expects a LiteralString.
+
+```python
+def query_user(conn: Connection, user_id: str) -> User:
+    query = f"SELECT * FROM data WHERE user_id = {user_id}"
+    conn.execute(query)  # Error: Expected LiteralString, got str.
+    ...
+```
+
+```python
+def query_user(conn: Connection, user_id: str) -> User:
+    query = "SELECT * FROM data WHERE user_id = ?"
+    conn.execute(query, (user_id,))  # OK.
+
+```
+
+LiteralStrings are created either from an explicit string literal like "foo" or from combining multiple string literals or LiteralStrings. This is a security focused typing feature for safely calling  powerful APIs. See [PEP 675](https://peps.python.org/pep-0675/#appendix-b-limitations) for more details.
+
 ## Suppression
 It is not always possible to address all errors immediately – some code is too dynamic and should be refactored, other times it's *just not the right time* to deal with a type error. We do encourage people to keep their type check results clean at all times and provide mechanisms to suppress errors that cannot be immediately fixed.
 
@@ -1948,7 +1969,7 @@ def foo() -> int:
     return ""
 ```
 
-Pyre also supports `# type: ignore` comments for backwards-compatibility with *mypy*.
+Pyre also supports `# type: ignore` comments for backwards-compatibility with *MyPy*.
 
 ### Suppressing Errors within Format Strings
 
@@ -1980,3 +2001,7 @@ Furthermore Pyre supports suppressing all errors in an individual file if you ad
 def foo(x: int) -> str:
     return x  # pyre will not error here
 ```
+
+## Debugging
+
+<!-- TODO(T132521708) Info on how to debug your own Pyre errors if it's unexpected: tools like `i pyre/sandbox` and how to use `reveal_type` to find out what the type checker is thinking -->
